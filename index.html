@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Futuristic Classroom Board (Sekuensial Neon)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Pustaka PeerJS untuk koneksi real-time -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+        :root {
+            --neon-cyan: #00f2ff;
+            --neon-magenta: #ff00ea;
+            --neon-blue: #2d5bff;
+            --dark-bg: #0b0f1a;
+            --glass-bg: rgba(15, 23, 42, 0.8);
+        }
+
+        body {
+            font-family: 'Plus+Jakarta+Sans', sans-serif;
+            overflow: hidden;
+            background-color: var(--dark-bg);
+            color: #e2e8f0;
+        }
+
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            height: calc(100vh - 80px);
+            background-color: #f1f5f9; 
+            background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+            background-size: 30px 30px;
+            overflow: hidden;
+            box-shadow: inset 0 0 50px rgba(0, 242, 255, 0.1);
+        }
+
+        canvas {
+            cursor: crosshair;
+            touch-action: none;
+        }
+
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .neon-border-cyan { border: 1px solid var(--neon-cyan); box-shadow: 0 0 10px rgba(0, 242, 255, 0.3); }
+        .neon-border-magenta { border: 1px solid var(--neon-magenta); box-shadow: 0 0 10px rgba(255, 0, 234, 0.3); }
+
+        .sticky-note {
+            position: absolute;
+            width: 180px;
+            min-height: 180px;
+            padding: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+            cursor: move;
+            transition: transform 0.1s linear;
+            z-index: 10;
+            clip-path: polygon(0 0, 100% 0, 100% 85%, 85% 100%, 0 100%);
+        }
+
+        .sticky-note:active { z-index: 50; transform: scale(1.02); }
+
+        .idea-card, .chat-msg { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: var(--neon-cyan); border-radius: 10px; }
+
+        .role-badge-guru { background: linear-gradient(45deg, #ff00ea, #9d00ff); color: white; box-shadow: 0 0 15px rgba(255, 0, 234, 0.4); }
+        .role-badge-siswa { background: linear-gradient(45deg, #00f2ff, #0062ff); color: white; box-shadow: 0 0 15px rgba(0, 242, 255, 0.4); }
+
+        #timer-display.warning, #game-timer-val.warning { 
+            color: var(--neon-magenta); 
+            text-shadow: 0 0 10px var(--neon-magenta);
+            animation: blink 1s infinite; 
+        }
+        @keyframes blink { 50% { opacity: 0.5; } }
+
+        .tab-btn.active { 
+            border-bottom: 3px solid var(--neon-cyan); 
+            color: var(--neon-cyan); 
+            text-shadow: 0 0 8px rgba(0, 242, 255, 0.5);
+        }
+
+        .rank-1 { background: linear-gradient(to right, rgba(254, 243, 199, 0.2), transparent); border-left: 3px solid #fcd34d; }
+    </style>
+</head>
+<body class="h-screen flex flex-col">
+
+    <!-- LANDING PAGE -->
+    <div id="landing-page" class="fixed inset-0 z-[1000] bg-[#050810] flex items-center justify-center p-6">
+        <div class="absolute inset-0 opacity-20" style="background-image: linear-gradient(var(--neon-blue) 1px, transparent 1px), linear-gradient(90deg, var(--neon-blue) 1px, transparent 1px); background-size: 50px 50px;"></div>
+        
+        <div class="max-w-4xl w-full grid md:grid-cols-2 gap-12 items-center fade-in z-10">
+            <div class="space-y-8">
+                <div class="inline-flex p-4 bg-indigo-600 rounded-2xl text-white shadow-[0_0_20px_rgba(79,70,229,0.5)]">
+                    <i data-lucide="zap" class="w-10 h-10"></i>
+                </div>
+                <h1 class="text-5xl md:text-5xl font-extrabold text-white leading-none tracking-tighter">
+                    CLASSROOM <br><span class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500">BOARD.</span>
+                </h1>
+                <p class="text-xl text-slate-400 font-medium max-w-sm">
+                    Platform kolaborasi kelas masa depan dengan teknologi sinkronisasi real-time.
+                </p>
+                <div id="peer-status-msg" class="text-xs font-bold text-cyan-400 tracking-widest uppercase animate-pulse">Menghubungkan ke Jaringan...</div>
+            </div>
+
+            <div class="space-y-6">
+                <!-- Role: Guru -->
+                <div id="card-guru" onclick="selectLoginRole('guru')" class="glass-panel p-6 rounded-3xl border border-slate-800 hover:border-fuchsia-500 cursor-pointer transition-all group relative overflow-hidden">
+                    <div class="flex items-center gap-4 relative z-10">
+                        <div class="p-3 bg-fuchsia-500/20 text-fuchsia-400 rounded-2xl group-hover:bg-fuchsia-500 group-hover:text-white transition-all shadow-inner">
+                            <i data-lucide="shield-check"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white text-lg">Admin / Guru</h3>
+                            <p class="text-sm text-slate-500">Kontrol penuh akses room.</p>
+                        </div>
+                    </div>
+                    <div id="input-guru" class="hidden mt-6 pt-6 border-t border-slate-800 space-y-4">
+                        <input type="password" id="pass-guru" placeholder="Kode Akses" class="w-full px-5 py-3 bg-slate-900/50 border border-slate-700 rounded-2xl outline-none focus:border-fuchsia-500 text-white">
+                        <input type="text" id="custom-room-id" placeholder="ID Room" class="w-full px-5 py-3 bg-slate-900/50 border border-slate-700 rounded-2xl outline-none focus:border-fuchsia-500 text-white font-bold uppercase">
+                        <button id="btn-login-guru" onclick="loginGuru(event)" class="w-full py-4 bg-fuchsia-600 text-white font-black rounded-2xl hover:bg-fuchsia-500 shadow-[0_0_20px_rgba(192,38,211,0.4)] transition-all uppercase tracking-widest">Inisialisasi Board</button>
+                    </div>
+                </div>
+
+                <!-- Role: Siswa -->
+                <div id="card-siswa" onclick="selectLoginRole('siswa')" class="glass-panel p-6 rounded-3xl border border-slate-800 hover:border-cyan-500 cursor-pointer transition-all group relative overflow-hidden">
+                    <div class="flex items-center gap-4 relative z-10">
+                        <div class="p-3 bg-cyan-500/20 text-cyan-400 rounded-2xl group-hover:bg-cyan-500 group-hover:text-white transition-all">
+                            <i data-lucide="user-plus"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white text-lg">Siswa / Peserta</h3>
+                            <p class="text-sm text-slate-500">Gabung menggunakan ID Kelas.</p>
+                        </div>
+                    </div>
+                    <div id="input-siswa" class="hidden mt-6 pt-6 border-t border-slate-800 space-y-4">
+                        <input type="text" id="name-siswa" placeholder="Username" class="w-full px-5 py-3 bg-slate-900/50 border border-slate-700 rounded-2xl outline-none focus:border-cyan-500 text-white">
+                        <input type="text" id="room-id-input" placeholder="Masukkan ID Room" class="w-full px-5 py-3 bg-slate-900/50 border border-slate-700 rounded-2xl outline-none focus:border-cyan-500 text-white uppercase font-bold">
+                        <button id="btn-login-siswa" onclick="loginSiswa(event)" class="w-full py-4 bg-cyan-600 text-white font-black rounded-2xl hover:bg-cyan-500 shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all uppercase tracking-widest">Connect to Network</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP INTERFACE -->
+    <div id="app-interface" class="hidden h-screen flex flex-col fade-in">
+        <header class="h-20 glass-panel px-6 flex items-center justify-between shadow-2xl z-50">
+            <div class="flex items-center gap-4">
+                <div class="p-2.5 bg-gradient-to-br from-indigo-600 to-cyan-500 rounded-xl text-white shadow-lg">
+                    <i data-lucide="activity"></i>
+                </div>
+                <div>
+                    <h1 class="font-black text-xl text-white tracking-tight uppercase">Neon<span class="text-cyan-400">Board</span></h1>
+                    <div class="flex items-center gap-2">
+                        <span id="role-indicator" class="text-[9px] uppercase font-black px-2 py-0.5 rounded-md tracking-tighter">...</span>
+                        <span id="user-display-name" class="text-xs text-slate-400 font-bold">...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 bg-slate-900/50 px-5 py-2 rounded-2xl border border-slate-800 shadow-inner">
+                <div id="timer-display" class="font-mono text-2xl font-black text-cyan-400 w-24 text-center">00:00</div>
+                <div class="flex gap-2 guru-only">
+                    <button id="timer-btn" onclick="toggleTimer()" class="p-1.5 hover:bg-cyan-500/10 rounded-lg text-cyan-400"><i data-lucide="play" class="w-5 h-5"></i></button>
+                    <button onclick="resetTimer()" class="p-1.5 hover:bg-slate-800 rounded-lg text-slate-500"><i data-lucide="refresh-cw" class="w-5 h-5"></i></button>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <button onclick="saveBoard()" class="p-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-xl hover:bg-emerald-500 hover:text-white transition-all" title="Archive Canvas"><i data-lucide="folder-down"></i></button>
+                <button onclick="logout()" class="p-2.5 bg-slate-800 text-slate-400 rounded-xl hover:bg-red-500/20 hover:text-red-400 transition-all"><i data-lucide="power"></i></button>
+            </div>
+        </header>
+
+        <main class="flex-1 flex overflow-hidden bg-[#050810]">
+            <!-- Sidebar Kiri: Command Center -->
+            <aside class="w-80 glass-panel border-r border-slate-800 flex flex-col z-40">
+                <div class="flex border-b border-slate-800 bg-slate-900/30">
+                    <button onclick="switchTab('tools')" id="tab-tools" class="tab-btn flex-1 py-4 text-[10px] font-black uppercase tracking-widest active">Peralatan</button>
+                    <button onclick="switchTab('ideas')" id="tab-ideas" class="tab-btn flex-1 py-4 text-[10px] font-black uppercase tracking-widest">Kolaborasi</button>
+                    <button onclick="switchTab('game')" id="tab-game" class="tab-btn flex-1 py-4 text-[10px] font-black uppercase tracking-widest text-fuchsia-400 italic flex items-center justify-center gap-1">Terminal Game <span class="w-1.5 h-1.5 bg-fuchsia-500 rounded-full animate-ping"></span></button>
+                </div>
+
+                <!-- Tab: Peralatan -->
+                <div id="content-tools" class="tab-content p-5 space-y-6">
+                    <div class="grid grid-cols-4 gap-3">
+                        <button onclick="setTool('pen')" id="tool-pen" class="tool-btn p-3 rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 transition-all hover:scale-105"><i data-lucide="pen-tool"></i></button>
+                        <button onclick="setTool('eraser')" id="tool-eraser" class="tool-btn p-3 rounded-2xl bg-slate-800/50 text-slate-500 border border-transparent transition-all hover:scale-105"><i data-lucide="eraser"></i></button>
+                        <button onclick="addSticky()" class="p-3 rounded-2xl bg-amber-500/10 text-amber-400 border border-transparent transition-all hover:scale-105"><i data-lucide="sticky-note"></i></button>
+                        <button onclick="clearBoard()" class="guru-only p-3 rounded-2xl bg-red-500/10 text-red-500 border border-transparent transition-all hover:scale-105"><i data-lucide="trash-2"></i></button>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between p-3 bg-slate-900/50 rounded-2xl border border-slate-800">
+                            <div class="flex gap-2">
+                                <button onclick="setColor('#000000')" class="w-7 h-7 rounded-full bg-black border border-slate-600"></button>
+                                <button onclick="setColor('#00f2ff')" class="w-7 h-7 rounded-full bg-cyan-400 border border-white shadow-[0_0_8px_#00f2ff]"></button>
+                                <button onclick="setColor('#ff00ea')" class="w-7 h-7 rounded-full bg-fuchsia-500 border border-white shadow-[0_0_8px_#ff00ea]"></button>
+                                <button onclick="setColor('#22c55e')" class="w-7 h-7 rounded-full bg-emerald-500 border border-white"></button>
+                            </div>
+                            <input type="range" min="1" max="100" value="5" oninput="setSize(this.value)" class="w-20 h-1 bg-slate-700 rounded-full appearance-none accent-cyan-400 cursor-pointer">
+                        </div>
+                        <div class="flex justify-between items-center px-1 text-[9px] font-black uppercase text-slate-500">
+                            <span>Kapasitas Garis</span>
+                            <span id="brush-size-display" class="text-cyan-400 font-mono">5px</span>
+                        </div>
+                        <div class="pt-2 guru-only">
+                            <button id="lock-btn" onclick="toggleLock()" class="w-full py-3 px-3 border border-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 text-slate-400 transition-all">
+                                <i data-lucide="unlock" class="w-4 h-4"></i> Freeze Papan
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Kolaborasi -->
+                <div id="content-ideas" class="tab-content hidden flex-1 flex flex-col min-h-0">
+                    <div id="ideas-container" class="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar"></div>
+                    <div class="p-4 glass-panel border-t border-slate-800">
+                        <div class="flex gap-2">
+                            <input type="text" id="idea-input" placeholder="Kirim data ide..." class="flex-1 bg-slate-900/80 border border-slate-700 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-cyan-500 text-white transition-all">
+                            <button onclick="addIdea()" class="p-2.5 bg-cyan-600 text-white rounded-xl hover:bg-cyan-500 transition-all"><i data-lucide="send" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Game -->
+                <div id="content-game" class="tab-content hidden flex-1 flex flex-col min-h-0">
+                    <!-- Game Control (Hanya Guru) -->
+                    <div class="p-5 border-b border-slate-800 guru-only bg-slate-900/20">
+                        <h4 class="text-[10px] font-black text-fuchsia-400 uppercase tracking-widest mb-3 flex items-center gap-2"><i data-lucide="database" class="w-3 h-3"></i> Bank Kosakata</h4>
+                        <textarea id="game-words-input" placeholder="Apel, Jeruk, Rumah, Kereta..." class="w-full h-20 p-3 bg-slate-900 border border-slate-700 rounded-2xl text-xs outline-none focus:border-fuchsia-500 text-slate-300 resize-none custom-scrollbar"></textarea>
+                        <div class="grid grid-cols-2 gap-3 mt-3">
+                            <button onclick="startGame()" class="py-2.5 bg-fuchsia-600 text-white rounded-xl font-black text-[10px] uppercase tracking-tighter hover:bg-fuchsia-500 transition-all shadow-[0_0_15px_rgba(192,38,211,0.2)]">Init Sesi</button>
+                            <button onclick="nextTurn()" id="btn-next-turn" class="py-2.5 bg-slate-800 text-slate-300 rounded-xl font-black text-[10px] uppercase tracking-tighter hidden border border-slate-700">Next Turn</button>
+                        </div>
+                    </div>
+
+                    <!-- Chat Game Area -->
+                    <div class="flex-1 flex flex-col min-h-0 bg-slate-900/10">
+                        <div id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar text-[13px]"></div>
+                        <div class="p-4 glass-panel border-t border-slate-800">
+                            <div class="flex gap-2">
+                                <input type="text" id="chat-input" placeholder="Tebak kata di sini..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-cyan-500 text-white uppercase font-bold" onkeypress="if(event.key === 'Enter') sendChatMessage()">
+                                <button onclick="sendChatMessage()" class="p-2.5 bg-fuchsia-600 text-white rounded-xl shadow-lg hover:shadow-fuchsia-500/20 transition-all"><i data-lucide="cpu" class="w-4 h-4"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Bahagian Tengah: Workspace Area -->
+            <section class="flex-1 relative canvas-container" id="board-area">
+                <canvas id="main-canvas"></canvas>
+                
+                <!-- Status Overlay (Pusat Informasi Giliran) -->
+                <div id="turn-indicator" class="absolute top-6 left-1/2 -translate-x-1/2 glass-panel px-8 py-3 rounded-full border border-cyan-500/30 flex items-center gap-6 shadow-2xl hidden z-[60]">
+                    <div class="flex flex-col items-center border-r border-slate-700 pr-6">
+                         <span class="text-[8px] font-black text-cyan-400 uppercase tracking-widest">Sisa Waktu</span>
+                         <span id="game-timer-val" class="text-lg font-mono font-black text-fuchsia-400 tracking-wider">60s</span>
+                    </div>
+                    <div class="text-center">
+                        <span class="text-[8px] font-black text-slate-500 uppercase tracking-widest">Penggambar Aktif</span>
+                        <p id="current-drawer-name" class="text-xs font-black text-white uppercase tracking-widest">...</p>
+                    </div>
+                    <!-- Secret Word (Hanya untuk penggambar/guru) -->
+                    <div id="secret-word-container" class="hidden pl-6 border-l border-slate-700 text-center">
+                        <span class="text-[8px] font-black text-fuchsia-400 uppercase tracking-widest">Data Rahasia</span>
+                        <p id="secret-word-display" class="text-xs font-black text-fuchsia-300 uppercase tracking-tighter">---</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sisi Kanan: Network & Rank -->
+            <aside class="w-72 glass-panel border-l border-slate-800 flex flex-col z-40">
+                <!-- Leaderboard Section -->
+                <div id="mini-leaderboard" class="flex-1 flex flex-col min-h-0 hidden">
+                    <div class="p-4 bg-indigo-500/5 border-b border-slate-800 flex items-center justify-between">
+                        <span class="text-[10px] font-black text-cyan-400 uppercase tracking-[0.2em] flex items-center gap-2"><i data-lucide="trophy" class="w-3.5 h-3.5"></i> Peringkat</span>
+                        <button onclick="showScores()" class="p-1 hover:bg-slate-800 rounded text-slate-500"><i data-lucide="maximize-2" class="w-3 h-3"></i></button>
+                    </div>
+                    <div id="leaderboard-list" class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar"></div>
+                </div>
+
+                <!-- Network Status Section -->
+                <div id="network-panel" class="p-4 bg-slate-900/40 border-t border-slate-800">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex flex-col">
+                            <span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">ID Sektor</span>
+                            <span id="display-room-id-right" class="text-[10px] font-mono font-bold text-cyan-400 uppercase cursor-pointer" title="Salin ID">---</span>
+                        </div>
+                        <div class="flex flex-col items-end">
+                            <span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">Node Aktif</span>
+                            <span id="connected-count" class="text-[10px] font-bold text-cyan-400">0</span>
+                        </div>
+                    </div>
+                    <div id="active-participants-list" class="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
+                        <div class="text-[9px] text-slate-600 italic">No node detected.</div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+
+        <!-- Full Leaderboard Modal -->
+        <div id="score-modal" class="hidden fixed inset-0 z-[2000] bg-black/80 backdrop-blur-xl flex items-center justify-center p-6">
+            <div class="glass-panel w-full max-w-sm rounded-[2.5rem] shadow-2xl border border-cyan-500/30 overflow-hidden">
+                <div class="p-8 bg-gradient-to-b from-cyan-600/20 to-transparent text-center border-b border-slate-800">
+                    <div class="inline-flex p-4 bg-cyan-500 rounded-3xl shadow-[0_0_30px_rgba(0,242,255,0.5)] mb-4">
+                        <i data-lucide="trophy" class="w-8 h-8 text-white"></i>
+                    </div>
+                    <h3 class="text-2xl font-black text-white uppercase tracking-tighter">Arsip Rekor</h3>
+                </div>
+                <div id="score-list" class="p-8 space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar"></div>
+                <div class="p-6 text-center">
+                    <button onclick="hideScores()" class="px-8 py-3 bg-slate-800 text-slate-300 font-bold rounded-2xl hover:text-white transition-all uppercase text-xs tracking-widest">Tutup Data</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let peer;
+        let connections = []; 
+        let connToHost; 
+        let currentRoomId = "";
+        let gameCountdownInterval;
+
+        let state = {
+            role: null,
+            userName: '',
+            isLoggedIn: false,
+            tool: 'pen',
+            color: '#000000',
+            size: 5,
+            timerSeconds: 0,
+            timerActive: false,
+            isLocked: false,
+            ideas: [],
+            notes: [],
+            game: {
+                active: false,
+                wordIndex: 0, // Indeks kata saat ini (Berurutan)
+                startTime: null,
+                timeRemaining: 60,
+                currentDrawerId: null,
+                currentDrawerName: '',
+                wordList: [], // Daftar kata sekuensial dari Guru
+                studentQueue: [], // Antrean siswa yang terhubung
+                scores: {}
+            }
+        };
+
+        const canvas = document.getElementById('main-canvas');
+        const ctx = canvas.getContext('2d');
+        const boardArea = document.getElementById('board-area');
+        let isDrawing = false;
+        let lastX = 0, lastY = 0, timerInterval;
+
+        function copyToClipboard(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus(); textArea.select();
+            const success = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            if (success) showToast("ID Sektor disalin!");
+        }
+
+        // --- Timer Kelas Dasar ---
+        function toggleTimer() {
+            state.timerActive = !state.timerActive;
+            const btn = document.getElementById('timer-btn');
+            if (state.timerActive) {
+                btn.innerHTML = '<i data-lucide="pause" class="w-5 h-5"></i>';
+                timerInterval = setInterval(() => {
+                    state.timerSeconds++;
+                    updateTimerDisplay();
+                }, 1000);
+            } else {
+                btn.innerHTML = '<i data-lucide="play" class="w-5 h-5"></i>';
+                clearInterval(timerInterval);
+            }
+            lucide.createIcons();
+        }
+
+        function resetTimer() {
+            clearInterval(timerInterval);
+            state.timerSeconds = 0;
+            state.timerActive = false;
+            const btn = document.getElementById('timer-btn');
+            if (btn) btn.innerHTML = '<i data-lucide="play" class="w-5 h-5"></i>';
+            updateTimerDisplay();
+            lucide.createIcons();
+        }
+
+        function updateTimerDisplay() {
+            const m = Math.floor(state.timerSeconds / 60).toString().padStart(2, '0');
+            const s = (state.timerSeconds % 60).toString().padStart(2, '0');
+            document.getElementById('timer-display').innerText = `${m}:${s}`;
+        }
+
+        // --- Manual Board Locking ---
+        function toggleLock() {
+            state.isLocked = !state.isLocked;
+            checkLockState();
+            broadcast({ type: 'MANUAL_LOCK', data: state.isLocked });
+        }
+
+        function checkLockState() {
+            const btn = document.getElementById('lock-btn');
+            if (btn) {
+                if (state.isLocked) {
+                    btn.innerHTML = '<i data-lucide="lock" class="w-4 h-4"></i> Unlock Stream';
+                    btn.classList.replace('text-slate-400', 'text-fuchsia-400');
+                } else {
+                    btn.innerHTML = '<i data-lucide="unlock" class="w-4 h-4"></i> Lock Stream';
+                    btn.classList.replace('text-fuchsia-400', 'text-slate-400');
+                }
+            }
+            lucide.createIcons();
+        }
+
+        // --- PeerJS Logic ---
+        function initPeer(customId = null) {
+            return new Promise((resolve, reject) => {
+                if (peer) peer.destroy();
+                peer = customId ? new Peer(customId.toUpperCase()) : new Peer();
+                peer.on('open', (id) => resolve(id));
+                peer.on('error', (err) => {
+                    if (err.type === 'unavailable-id') showToast("ID Sektor sudah terpakai!");
+                    reject(err);
+                });
+                peer.on('connection', (conn) => {
+                    if (state.role !== 'guru') return;
+                    connections.push(conn);
+                    setupGuruConnection(conn);
+                });
+            });
+        }
+
+        function updateActiveNodesUI() {
+            const listContainer = document.getElementById('active-participants-list');
+            const countDisplay = document.getElementById('connected-count');
+            listContainer.innerHTML = "";
+            let count = 0;
+            if (state.role === 'guru') {
+                connections.forEach(conn => {
+                    if (conn.peerName) {
+                        count++;
+                        const item = document.createElement('div');
+                        item.className = "flex items-center gap-2 p-1.5 bg-slate-900/50 border border-slate-800 rounded-lg";
+                        item.innerHTML = `<div class="w-1.5 h-1.5 bg-cyan-500 rounded-full shadow-[0_0_5px_#00f2ff]"></div><span class="text-[9px] font-black text-slate-300 uppercase truncate">${conn.peerName}</span>`;
+                        listContainer.appendChild(item);
+                    }
+                });
+            } else {
+                listContainer.innerHTML = `<div class="text-[9px] text-cyan-600 italic uppercase">Network Uplink Active</div>`;
+                count = connections.length + 1; 
+            }
+            countDisplay.innerText = count;
+        }
+
+        function setupGuruConnection(conn) {
+            conn.on('data', (data) => {
+                if (data.type === 'HELLO') {
+                    conn.peerName = data.name;
+                    updateActiveNodesUI();
+                    broadcast({ type: 'CHAT_MSG', user: 'SYSTEM', text: `NODE: [${data.name}] terdeteksi masuk.`, isSystem: true });
+                    conn.send({
+                        type: 'INIT',
+                        data: {
+                            ideas: state.ideas, notes: state.notes, 
+                            canvasImage: canvas.toDataURL(), 
+                            game: state.game,
+                            isLocked: state.isLocked
+                        }
+                    });
+                } else {
+                    handleIncomingData(data);
+                    if (['IDEA_ADD', 'CHAT_MSG', 'DRAW', 'CLEAR', 'NOTE_ADD', 'NOTE_MOVE', 'NOTE_UPDATE'].includes(data.type)) {
+                        broadcast(data, conn);
+                    }
+                }
+            });
+            conn.on('close', () => {
+                connections = connections.filter(c => c !== conn);
+                updateActiveNodesUI();
+            });
+        }
+
+        function handleIncomingData(msg) {
+            switch(msg.type) {
+                case 'INIT':
+                    state.ideas = msg.data.ideas;
+                    state.notes = msg.data.notes;
+                    state.game = msg.data.game;
+                    state.isLocked = msg.data.isLocked;
+                    renderIdeas(); renderNotes(); updateGameUI(); checkLockState();
+                    const img = new Image();
+                    img.onload = () => ctx.drawImage(img, 0, 0);
+                    img.src = msg.data.canvasImage;
+                    break;
+                case 'DRAW':
+                    drawOnCanvas(msg.data.x1, msg.data.y1, msg.data.x2, msg.data.y2, msg.data.color, msg.data.size, msg.data.isEraser);
+                    break;
+                case 'CLEAR':
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    break;
+                case 'CHAT_MSG':
+                    addChatMessage(msg.user, msg.text, msg.isSystem);
+                    if (state.role === 'guru') checkGuess(msg.user, msg.text);
+                    break;
+                case 'GAME_UPDATE':
+                    state.game = msg.data;
+                    updateGameUI();
+                    if (msg.isNewTurn) {
+                        addChatMessage("SYSTEM", `Otoritas Gambar: [${state.game.currentDrawerName}]`, true);
+                    }
+                    if (msg.isFinished) {
+                        showToast("SEKTOR CLEAR: Permainan Selesai!");
+                        addChatMessage("SYSTEM", "DATA STREAM COMPLETE: Permainan Selesai. Semua kata telah divisualisasikan.", true);
+                        if (gameCountdownInterval) clearInterval(gameCountdownInterval);
+                    }
+                    break;
+                case 'IDEA_ADD':
+                    state.ideas.unshift(msg.data); renderIdeas();
+                    break;
+                case 'MANUAL_LOCK':
+                    state.isLocked = msg.data;
+                    checkLockState();
+                    break;
+                case 'NOTE_ADD':
+                    state.notes.push(msg.data); renderNotes();
+                    break;
+            }
+        }
+
+        function broadcast(data, excludeConn = null) {
+            if (state.role === 'guru') {
+                connections.forEach(conn => { if (conn !== excludeConn && conn.open) conn.send(data); });
+            } else if (connToHost && connToHost.open) {
+                connToHost.send(data);
+            }
+        }
+
+        // --- Login & UI Toggles ---
+        function selectLoginRole(role) {
+            document.querySelectorAll('#input-guru, #input-siswa').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`input-${role}`).classList.remove('hidden');
+        }
+
+        async function loginGuru(e) {
+            e.stopPropagation();
+            const pass = document.getElementById('pass-guru').value;
+            const roomId = document.getElementById('custom-room-id').value.trim();
+            if (pass !== 'admin12345') { showToast("Security Code ditolak!"); return; }
+            if (!roomId) { showToast("Namakan Sektor ID!"); return; }
+            try {
+                await initPeer(roomId);
+                currentRoomId = roomId.toUpperCase();
+                document.getElementById('display-room-id-right').innerText = currentRoomId;
+                document.getElementById('display-room-id-right').onclick = () => copyToClipboard(currentRoomId);
+                completeLogin('guru', 'Lead Authority');
+            } catch(err) {}
+        }
+
+        async function loginSiswa(e) {
+            e.stopPropagation();
+            const name = document.getElementById('name-siswa').value.trim();
+            const roomId = document.getElementById('room-id-input').value.trim();
+            if (!name || !roomId) { showToast("Protocol Incomplete!"); return; }
+            try {
+                await initPeer();
+                connToHost = peer.connect(roomId.toUpperCase());
+                connToHost.on('open', () => {
+                    currentRoomId = roomId.toUpperCase();
+                    document.getElementById('display-room-id-right').innerText = currentRoomId;
+                    connToHost.send({ type: 'HELLO', name: name });
+                    connToHost.on('data', (data) => handleIncomingData(data));
+                    completeLogin('siswa', name);
+                });
+                connToHost.on('error', () => showToast("Sektor tidak ditemukan!"));
+            } catch(err) {}
+        }
+
+        function completeLogin(role, name) {
+            state.role = role; state.userName = name; state.isLoggedIn = true;
+            document.getElementById('landing-page').classList.add('hidden');
+            document.getElementById('app-interface').classList.remove('hidden');
+            document.getElementById('user-display-name').innerText = name;
+            document.getElementById('role-indicator').innerText = role;
+            document.getElementById('role-indicator').className = `text-[9px] uppercase font-black px-2 py-0.5 rounded-md role-badge-${role}`;
+            setTimeout(() => {
+                const rect = boardArea.getBoundingClientRect();
+                canvas.width = rect.width;
+                canvas.height = rect.height;
+                document.querySelectorAll('.guru-only').forEach(el => el.style.display = role === 'guru' ? 'block' : 'none');
+                lucide.createIcons();
+                updateActiveNodesUI();
+            }, 200);
+        }
+
+        // --- LOGIKA GAME (SEKUENSIAL) ---
+        function startGame() {
+            const raw = document.getElementById('game-words-input').value;
+            if (!raw.trim()) { showToast("Input Data Kosakata!"); return; }
+            if (connections.length === 0) { showToast("Tidak ada node siswa!"); return; }
+
+            const words = raw.split(',').map(w => w.trim()).filter(w => w);
+            state.game.active = true;
+            state.game.wordIndex = 0; // Mulai dari kata pertama
+            state.game.wordList = words;
+            // Ambil daftar siswa yang valid
+            state.game.studentQueue = connections.filter(c => c.peerName).map(c => ({
+                peerId: c.peer,
+                name: c.peerName
+            }));
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            broadcast({ type: 'CLEAR' });
+            updateTurn();
+            document.getElementById('btn-next-turn').classList.remove('hidden');
+        }
+
+        function nextTurn() {
+            if (!state.game.active) return;
+            
+            // Majukan ke kosakata berikutnya secara berurutan
+            state.game.wordIndex++;
+            
+            // Jika kata sudah habis, permainan selesai
+            if (state.game.wordIndex >= state.game.wordList.length) {
+                state.game.active = false;
+                state.game.currentDrawerId = null;
+                broadcast({ type: 'GAME_UPDATE', data: state.game, isFinished: true });
+                updateGameUI();
+                return;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            broadcast({ type: 'CLEAR' });
+            updateTurn();
+        }
+
+        function updateTurn() {
+            if (gameCountdownInterval) clearInterval(gameCountdownInterval);
+            
+            // Tentukan siswa yang menggambar berdasarkan siklus (wordIndex % totalSiswa)
+            const studentIdx = state.game.wordIndex % state.game.studentQueue.length;
+            const currentStudent = state.game.studentQueue[studentIdx];
+            
+            state.game.currentDrawerId = currentStudent.peerId;
+            state.game.currentDrawerName = currentStudent.name;
+            state.game.timeRemaining = 60;
+            
+            broadcast({ type: 'GAME_UPDATE', data: state.game, isNewTurn: true });
+            updateGameUI();
+
+            if (state.role === 'guru') {
+                gameCountdownInterval = setInterval(() => {
+                    state.game.timeRemaining--;
+                    if (state.game.timeRemaining <= 0) {
+                        clearInterval(gameCountdownInterval);
+                        const timeoutMsg = { type: 'CHAT_MSG', user: 'SYSTEM', text: `WAKTU HABIS: Data tadi adalah [${state.game.wordList[state.game.wordIndex]}]`, isSystem: true };
+                        broadcast(timeoutMsg); handleIncomingData(timeoutMsg);
+                        
+                        // Lanjut ke kata berikutnya otomatis jika waktu habis
+                        setTimeout(() => nextTurn(), 2000);
+                    }
+                    broadcast({ type: 'GAME_UPDATE', data: state.game });
+                    updateGameUI();
+                }, 1000);
+            }
+        }
+
+        function updateGameUI() {
+            const indicator = document.getElementById('turn-indicator');
+            const drawerName = document.getElementById('current-drawer-name');
+            const timerVal = document.getElementById('game-timer-val');
+            const miniLeaderboard = document.getElementById('mini-leaderboard');
+            const secretBox = document.getElementById('secret-word-container');
+            const secretText = document.getElementById('secret-word-display');
+
+            if (!state.game.active) {
+                indicator.classList.add('hidden');
+                return;
+            }
+
+            indicator.classList.remove('hidden');
+            miniLeaderboard.classList.remove('hidden');
+            drawerName.innerText = state.game.currentDrawerName;
+            timerVal.innerText = state.game.timeRemaining + 's';
+            
+            if (state.game.timeRemaining <= 10) timerVal.classList.add('warning');
+            else timerVal.classList.remove('warning');
+
+            const isMyTurn = peer.id === state.game.currentDrawerId;
+            const currentWord = state.game.wordList[state.game.wordIndex];
+
+            // Tampilkan kata rahasia ke Guru dan Penggambar aktif
+            if (state.role === 'guru' || isMyTurn) {
+                secretBox.classList.remove('hidden');
+                secretText.innerText = currentWord || "---";
+            } else {
+                secretBox.classList.add('hidden');
+            }
+
+            // Render Leaderboard
+            const list = document.getElementById('leaderboard-list');
+            list.innerHTML = "";
+            const sorted = Object.entries(state.game.scores).sort((a,b) => b[1] - a[1]);
+            sorted.forEach(([name, score], i) => {
+                list.innerHTML += `
+                    <div class="flex items-center justify-between px-3 py-2 rounded-xl text-[10px] ${i===0?'rank-1 border border-amber-500/30':'bg-slate-900/50 border border-slate-800'}">
+                        <span class="font-black text-slate-300 uppercase">${i+1}. ${name}</span>
+                        <span class="font-black text-cyan-400">${score}</span>
+                    </div>`;
+            });
+        }
+
+        function checkGuess(user, text) {
+            if (!state.game.active || state.game.timeRemaining <= 0) return;
+            const currentWord = state.game.wordList[state.game.wordIndex];
+            
+            // Penggambar tidak boleh menebak sendiri
+            if (user === state.game.currentDrawerName) return;
+
+            if (text.toLowerCase() === currentWord.toLowerCase()) {
+                if (gameCountdownInterval) clearInterval(gameCountdownInterval);
+                const pointsPenebak = Math.max(1, Math.floor((state.game.timeRemaining / 60) * 20));
+                
+                state.game.scores[user] = (state.game.scores[user] || 0) + pointsPenebak;
+                state.game.scores[state.game.currentDrawerName] = (state.game.scores[state.game.currentDrawerName] || 0) + 20;
+                
+                const winMsg = { type: 'CHAT_MSG', user: 'SYSTEM', text: `DEKRIPSI BERHASIL! [${user}] menebak "${currentWord}". (+${pointsPenebak} & +20 Pts)`, isSystem: true };
+                broadcast(winMsg); handleIncomingData(winMsg);
+                
+                // Jeda sebentar sebelum lanjut ke kata berikutnya
+                setTimeout(() => nextTurn(), 2000);
+            }
+        }
+
+        // --- UI UTILS ---
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`content-${tab}`).classList.remove('hidden');
+            document.getElementById(`tab-${tab}`).classList.add('active');
+            lucide.createIcons();
+        }
+
+        function addChatMessage(user, text, isSystem = false) {
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = `chat-msg mb-2 p-3 rounded-2xl ${isSystem ? 'bg-cyan-500/10 text-cyan-400 text-center font-black text-[9px] border border-cyan-500/20 uppercase tracking-tighter' : 'bg-slate-900 border border-slate-800 text-slate-300'}`;
+            div.innerHTML = isSystem ? text : `<span class="font-black text-fuchsia-400 uppercase tracking-tighter mr-2">${user} //</span> ${text}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function sendChatMessage() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+            const msg = { type: 'CHAT_MSG', user: state.userName, text: text, isSystem: false };
+            broadcast(msg); handleIncomingData(msg);
+            input.value = '';
+        }
+
+        function showScores() {
+            const list = document.getElementById('score-list');
+            list.innerHTML = "";
+            const sorted = Object.entries(state.game.scores).sort((a,b) => b[1] - a[1]);
+            sorted.forEach(([name, score], i) => {
+                list.innerHTML += `<div class="flex justify-between p-4 bg-slate-900/80 rounded-2xl border border-slate-700 items-center"><div class="flex items-center gap-3"><span class="w-8 h-8 flex items-center justify-center bg-cyan-500/20 text-cyan-400 rounded-full font-black text-xs">${i+1}</span><span class="font-black text-white uppercase text-sm">${name}</span></div><span class="font-black text-cyan-400">${score} PTS</span></div>`;
+            });
+            document.getElementById('score-modal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function hideScores() { document.getElementById('score-modal').classList.add('hidden'); }
+
+        // --- Papan Gambar Dasar ---
+        function setTool(t) { 
+            state.tool = t; 
+            document.querySelectorAll('.tool-btn').forEach(b => {
+                b.classList.remove('bg-cyan-500/10', 'text-cyan-400', 'border-cyan-500/30');
+                b.classList.add('bg-slate-800/50', 'text-slate-500');
+            }); 
+            document.getElementById(`tool-${t}`).classList.replace('bg-slate-800/50', 'bg-cyan-500/10');
+            document.getElementById(`tool-${t}`).classList.replace('text-slate-500', 'text-cyan-400');
+        }
+        function setColor(c) { state.color = c; setTool('pen'); }
+        function setSize(s) { 
+            state.size = s; 
+            const display = document.getElementById('brush-size-display');
+            if(display) display.innerText = s + "px";
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (state.game.active && peer.id !== state.game.currentDrawerId && state.role !== 'guru') return;
+            if (state.isLocked && state.role === 'siswa') return;
+            isDrawing = true; [lastX, lastY] = [e.offsetX, e.offsetY];
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+            const isEraser = state.tool === 'eraser';
+            const color = isEraser ? '#f1f5f9' : state.color;
+            drawOnCanvas(lastX, lastY, e.offsetX, e.offsetY, color, state.size, isEraser);
+            broadcast({ type: 'DRAW', data: { x1: lastX, y1: lastY, x2: e.offsetX, y2: e.offsetY, color, size: state.size, isEraser } });
+            [lastX, lastY] = [e.offsetX, e.offsetY];
+        });
+
+        canvas.addEventListener('mouseup', () => isDrawing = false);
+
+        function drawOnCanvas(x1, y1, x2, y2, color, size, isEraser = false) {
+            ctx.beginPath();
+            ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
+            ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+            ctx.lineCap = 'round'; ctx.strokeStyle = color; ctx.lineWidth = size; ctx.stroke();
+            ctx.globalCompositeOperation = 'source-over';
+        }
+
+        function clearBoard() { if (confirm('Purge Canvas Data?')) { ctx.clearRect(0, 0, canvas.width, canvas.height); broadcast({ type: 'CLEAR' }); } }
+
+        function addSticky() {
+            if (state.isLocked && state.role === 'siswa') return;
+            const note = { id: Date.now(), text: 'Data Node Baru...', x: 100, y: 100, color: '#0f172a' };
+            state.notes.push(note); renderNotes();
+            broadcast({ type: 'NOTE_ADD', data: note });
+        }
+
+        function renderNotes() {
+            document.querySelectorAll('.sticky-note').forEach(n => n.remove());
+            state.notes.forEach(note => {
+                const div = document.createElement('div');
+                div.className = 'sticky-note bg-slate-900 border border-slate-700 text-white shadow-2xl';
+                div.setAttribute('data-note-id', note.id);
+                div.style.left = note.x + 'px'; div.style.top = note.y + 'px';
+                div.innerHTML = `<div class="flex flex-col h-full"><button onclick="deleteNote(${note.id})" class="self-end p-1 text-slate-500 hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button><textarea onkeyup="syncNoteText(${note.id}, this.value)" class="bg-transparent border-none resize-none flex-1 text-xs font-medium outline-none text-slate-300">${note.text}</textarea></div>`;
+                div.onmousedown = (e) => {
+                    if (e.target.tagName === 'TEXTAREA') return;
+                    let offsetX = e.clientX - div.offsetLeft; let offsetY = e.clientY - div.offsetTop;
+                    document.onmousemove = (mv) => {
+                        note.x = mv.clientX - offsetX; note.y = mv.clientY - offsetY;
+                        div.style.left = note.x + 'px'; div.style.top = note.y + 'px';
+                        broadcast({ type: 'NOTE_MOVE', id: note.id, x: note.x, y: note.y });
+                    };
+                    document.onmouseup = () => document.onmousemove = null;
+                };
+                boardArea.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+
+        function deleteNote(id) {
+            state.notes = state.notes.filter(n => n.id !== id);
+            renderNotes();
+            broadcast({ type: 'INIT', data: { ideas: state.ideas, notes: state.notes, canvasImage: canvas.toDataURL(), game: state.game, isLocked: state.isLocked } });
+        }
+
+        function syncNoteText(id, text) {
+            const note = state.notes.find(n => n.id === id);
+            if (note) { note.text = text; broadcast({ type: 'NOTE_UPDATE', id, text }); }
+        }
+
+        function addIdea() {
+            const input = document.getElementById('idea-input');
+            if (!input.value.trim()) return;
+            const idea = { id: Date.now(), user: state.userName, text: input.value };
+            state.ideas.unshift(idea); renderIdeas();
+            broadcast({ type: 'IDEA_ADD', data: idea });
+            input.value = '';
+        }
+
+        function renderIdeas() {
+            const container = document.getElementById('ideas-container');
+            if (!container) return;
+            container.innerHTML = "";
+            document.getElementById('idea-count').innerText = state.ideas.length;
+            state.ideas.forEach(id => {
+                container.innerHTML += `<div class="idea-card p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-lg relative overflow-hidden"><div class="absolute top-0 left-0 w-1 h-full bg-cyan-500"></div><span class="text-[9px] font-black text-cyan-400 uppercase tracking-widest mb-1 block">${id.user} // ANALYZING</span><p class="text-xs font-medium text-slate-300 leading-relaxed">${id.text}</p></div>`;
+            });
+        }
+
+        function showToast(m) {
+            const t = document.createElement('div'); t.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-cyan-400 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-cyan-500 shadow-[0_0_20px_rgba(0,242,255,0.3)] z-[3000]';
+            t.innerText = m; document.body.appendChild(t); setTimeout(() => t.remove(), 3000);
+        }
+
+        function saveBoard() { const a = document.createElement('a'); a.download = 'neon-board-archived.png'; a.href = canvas.toDataURL(); a.click(); }
+        function logout() { location.reload(); }
+
+        window.onload = () => {
+            lucide.createIcons();
+            setTool('pen');
+        };
+    </script>
+</body>
+</html>
